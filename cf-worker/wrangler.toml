@@ -1,0 +1,22 @@
+name = "cf-netwatch"
+main = "src/index.js"
+compatibility_date = "2026-05-20"
+
+# Bundle .html imports as raw text strings
+[[rules]]
+type = "Text"
+globs = ["**/*.html"]
+
+# Analytics Engine datasets - created automatically on first write
+[[analytics_engine_datasets]]
+binding = "NETWATCH_PING"
+dataset = "netwatch_ping"
+
+[[analytics_engine_datasets]]
+binding = "NETWATCH_SPEEDTEST"
+dataset = "netwatch_speedtest"
+
+
+[observability.logs]
+enabled = true
+invocation_logs = true

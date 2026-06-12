@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ping Monitor Dashboard</title>
+<meta name="robots" content="noindex, nofollow">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #c9d1d9; padding: 24px; }
+  h1 { font-size: 1.5rem; margin-bottom: 8px; color: #f0f6fc; }
+  .subtitle { color: #8b949e; margin-bottom: 24px; }
+  .controls { display: flex; gap: 12px; align-items: center; margin-bottom: 20px; flex-wrap: wrap; }
+  .controls select, .controls button { padding: 6px 14px; border-radius: 6px; border: 1px solid #30363d; background: #161b22; color: #c9d1d9; font-size: 0.875rem; cursor: pointer; }
+  .controls button:hover { background: #21262d; }
+  .chart-container { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 24px; position: relative; height: 400px; max-height: 70vh; min-height: 250px; }
+  .summary { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-bottom: 24px; }
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; }
+  .card h3 { font-size: 0.875rem; color: #8b949e; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .card .value { font-size: 1.5rem; font-weight: 600; color: #f0f6fc; }
+  .card .detail { font-size: 0.75rem; color: #8b949e; margin-top: 2px; }
+  .ok { color: #3fb950; }
+  .fail { color: #f85149; }
+  .error { background: #f8514920; color: #f85149; padding: 12px; border-radius: 6px; margin-bottom: 16px; display: none; }
+  .loading { text-align: center; padding: 40px; color: #8b949e; }
+  .sparkline { display: block; margin-top: 8px; width: 100%; }
+  .refresh { font-size: 0.75rem; color: #8b949e; margin-top: 4px; }
+</style>
+</head>
+<body>
+<h1>Ping Monitor Dashboard</h1>
+<p class="subtitle">Latency analytics per target. Each target pinged 10 times, and then we used the avg to calculate the min,avg, and max (of the avg) reported here.</p>
+
+<div class="error" id="error"></div>
+
+<div class="controls">
+  <label for="range">Time range:</label>
+  <select id="range">
+    <option value="1">Last hour</option>
+    <option value="6">Last 6 hours</option>
+    <option value="12">Last 12 hours</option>
+    <option value="24" selected>Last 24 hours</option>
+    <option value="72">Last 3 days</option>
+    <option value="168">Last 7 days</option>
+  </select>
+  <label for="interval">Bucket:</label>
+  <select id="interval">
+    <option value="15">15 minutes</option>
+    <option value="30">30 minutes</option>
+    <option value="60" selected>1 hour</option>
+  </select>
+  <button onclick="loadData()">Refresh</button>
+</div>
+
+<div class="summary" id="summary"></div>
+
+<p>Click below on a legend item on a chart to show or hide that target. (It does not affect card sparklines above.)</p>
+
+<div class="chart-container">
+  <canvas id="latencyChart"></canvas>
+</div>
+<div class="chart-container">
+  <canvas id="latencyChartSlow"></canvas>
+</div>
+<div class="chart-container">
+  <canvas id="lossChart"></canvas>
+</div>
+
+<p class="refresh">Auto-refreshes every 5 minutes. Last updated: <span id="updated">-</span></p>
+
+<script>
+function getColor(i, total) {
+  const hue = Math.round((i * 360) / Math.max(total, 1));
+  return 'hsl(' + hue + ', 75%, 60%)';
+}
+const targetSets = window.PING_TARGET_SETS || [];
+const latencyCharts = {};
+let chart2 = null;
+const hiddenLatencyBySet = {};
+const hiddenLossTargets = new Set();
+
+function getHiddenSet(label) {
+  if (!hiddenLatencyBySet[label]) hiddenLatencyBySet[label] = new Set();
+  return hiddenLatencyBySet[label];
+}
+
+function legendOnClick(hiddenTargets) {
+  return function(_e, legendItem, legend) {
+    const chart = legend.chart;
+    const index = legendItem.datasetIndex;
+    const label = chart.data.datasets[index].label;
+    if (chart.isDatasetVisible(index)) {
+      chart.hide(index);
+      legendItem.hidden = true;
+      hiddenTargets.add(label);
+    } else {
+      chart.show(index);
+      legendItem.hidden = false;
+      hiddenTargets.delete(label);
+    }
+  };
+}
+
+function applyHiddenTargets(chart, hiddenTargets) {
+  chart.data.datasets.forEach(function(ds, i) {
+    if (hiddenTargets.has(ds.label)) {
+      chart.hide(i);
+    }
+  });
+}
+
+function chartLegendOptions(hiddenTargets) {
+  return {
+    labels: { color: '#8b949e', usePointStyle: true },
+    onClick: legendOnClick(hiddenTargets),
+    onHover: function(e) { e.native.target.style.cursor = 'pointer'; },
+    onLeave: function(e) { e.native.target.style.cursor = 'default'; },
+  };
+}
+
+async function loadData() {
+  const hours = document.getElementById('range').value;
+  const interval = document.getElementById('interval').value;
+  const errorEl = document.getElementById('error');
+  errorEl.style.display = 'none';
+
+  try {
+    const res = await fetch('/api/analytics/ping?hours=' + hours + '&interval=' + interval);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const json = await res.json();
+    if (json.error) throw new Error(json.error);
+    renderDashboard(json);
+    document.getElementById('updated').textContent = new Date().toLocaleTimeString();
+  } catch (err) {
+    errorEl.textContent = 'Failed to load data: ' + err.message;
+    errorEl.style.display = 'block';
+  }
+}
+
+function renderDashboard(json) {
+  renderSummary(json.summary, json.series);
+
+  const targetToSet = new Map();
+  for (const set of targetSets) {
+    for (const t of set.targets) {
+      if (!targetToSet.has(t)) {
+        targetToSet.set(t, set.label);
+      }
+    }
+  }
+
+  const seriesBySet = {};
+  for (const s of json.series) {
+    const label = targetToSet.get(s.target) || 'Other';
+    if (!seriesBySet[label]) seriesBySet[label] = [];
+    seriesBySet[label].push(s);
+  }
+
+  for (const label in latencyCharts) {
+    if (latencyCharts[label]) {
+      latencyCharts[label].destroy();
+      delete latencyCharts[label];
+    }
+  }
+
+  targetSets.forEach(function(set, i) {
+    var series = seriesBySet[set.label] || [];
+    renderLatencyChart(series, 'latencyChart' + i, 'Average Ping Latency (ms) - ' + set.label, set.label);
+  });
+
+  var otherSeries = seriesBySet['Other'] || [];
+  renderLatencyChart(otherSeries, 'latencyChartOther', 'Average Ping Latency (ms) - Other', 'Other');
+
+  renderLossChart(json.series);
+}
+
+function renderSummary(summary, series) {
+  const el = document.getElementById('summary');
+  if (!summary || summary.length === 0) {
+    el.innerHTML = '<div class="card"><h3>No data</h3><div class="value">-</div></div>';
+    return;
+  }
+  const seriesByTarget = {};
+  if (series) {
+    series.forEach(function(s) { seriesByTarget[s.target] = s; });
+  }
+  el.innerHTML = summary.map(function(s) {
+    const parts = ['<span class="ok">' + s.ok + ' ok</span>'];
+    if (s.fail > 0) {
+      parts.push('<span class="fail">' + s.fail + ' fail</span>');
+      const cls = s.availability >= 95 ? '' : 'fail';
+      parts.push('<span class="' + cls + '">' + s.availability + '% up</span>');
+    } else if (s.availability < 100) {
+      parts.push('<span>' + s.availability + '% up</span>');
+    }
+    const spark = seriesByTarget[s.target]
+      ? renderSparkline(seriesByTarget[s.target].avg_ms, sparklineColor(s.avg_ms))
+      : '';
+    return '<div class="card">' +
+      '<h3>' + esc(s.target) + '</h3>' +
+      '<div class="value">' + s.avg_ms.toFixed(1) + ' ms</div>' +
+      '<div class="detail">' + parts.join(' &middot; ') + '</div>' +
+      spark +
+    '</div>';
+  }).join('');
+}
+
+function sparklineColor(avgMs) {
+  // Cool (fast) → warm (slow); no good/bad red/green semantics
+  const ms = Math.min(Math.max(avgMs, 5), 200);
+  const t = (ms - 5) / (200 - 5);
+  const hue = Math.round(210 - t * 175);
+  return 'hsl(' + hue + ', 65%, 55%)';
+}
+
+function renderSparkline(data, color) {
+  if (!data || data.length < 2) return '';
+  var w = 200;
+  var h = 36;
+  var pad = 2;
+  var min = data[0];
+  var max = data[0];
+  for (var i = 1; i < data.length; i++) {
+    if (data[i] < min) min = data[i];
+    if (data[i] > max) max = data[i];
+  }
+  if (min === max) {
+    min -= 1;
+    max += 1;
+  }
+  var range = max - min;
+  var stepX = (w - pad * 2) / (data.length - 1);
+  var points = '';
+  for (var i = 0; i < data.length; i++) {
+    var x = pad + i * stepX;
+    var y = pad + h - pad * 2 - ((data[i] - min) / range) * (h - pad * 2);
+    points += x.toFixed(1) + ',' + y.toFixed(1) + ' ';
+  }
+  return '<svg class="sparkline" viewBox="0 0 ' + w + ' ' + h + '" width="100%" height="' + h + '">' +
+    '<polyline fill="none" stroke="' + color + '" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" points="' + points + '"/></svg>';
+}
+
+function buildChartTimeline(series) {
+  const seen = new Set();
+  const timestamps = [];
+  for (const s of series) {
+    for (const t of s.timestamps) {
+      if (!seen.has(t)) {
+        seen.add(t);
+        timestamps.push(t);
+      }
+    }
+  }
+  timestamps.sort();
+  return timestamps;
+}
+
+function alignSeriesToTimeline(timestamps, seriesTimestamps, values, transform) {
+  const indexByTime = new Map();
+  seriesTimestamps.forEach((t, i) => indexByTime.set(t, i));
+  return timestamps.map((t) => {
+    const i = indexByTime.get(t);
+    if (i === undefined) return null;
+    const v = values[i];
+    return transform ? transform(v) : v;
+  });
+}
+
+function renderLatencyChart(series, canvasId, title, label) {
+  if (latencyCharts[label]) {
+    latencyCharts[label].destroy();
+    delete latencyCharts[label];
+  }
+  if (!series || series.length === 0) {
+    return;
+  }
+  const ctx = document.getElementById(canvasId).getContext('2d');
+  const total = series.length;
+  const timestamps = buildChartTimeline(series);
+
+  const datasets = series.map((s, i) => {
+    const color = getColor(i, total);
+    return {
+      label: s.target,
+      data: alignSeriesToTimeline(timestamps, s.timestamps, s.avg_ms, v => v > 0 ? v : null),
+      borderColor: color,
+      backgroundColor: color,
+      tension: 0.3,
+      pointRadius: 2,
+      pointHoverRadius: 5,
+      pointHitRadius: 10,
+      borderWidth: 2,
+    };
+  });
+
+  const chart = new Chart(ctx, {
+    type: 'line',
+    data: { labels: timestamps.map(t => formatTime(t)), datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        title: { display: true, text: title, color: '#c9d1d9', font: { size: 14 } },
+        legend: chartLegendOptions(getHiddenSet(label)),
+        tooltip: {
+          itemSort: (a, b) => (b.raw == null ? -Infinity : b.raw) - (a.raw == null ? -Infinity : a.raw),
+          callbacks: {
+            label: (ctx) => {
+              let val = ctx.parsed.y;
+              if (val == null) return ctx.dataset.label + ': no data';
+              return ctx.dataset.label + ': ' + (typeof val === 'number' ? val.toFixed(1) : val) + ' ms';
+            }
+          }
+        }
+      },
+      scales: {
+        x: { ticks: { color: '#8b949e', maxTicksLimit: 20 }, grid: { color: '#21262d' } },
+        y: {
+          type: 'logarithmic',
+          ticks: { color: '#8b949e', callback: v => v + ' ms' },
+          grid: { color: '#21262d' }
+        },
+      },
+    },
+  });
+  const hiddenTargets = getHiddenSet(label);
+  applyHiddenTargets(chart, hiddenTargets);
+  latencyCharts[label] = chart;
+}
+
+function renderLossChart(series) {
+  if (chart2) chart2.destroy();
+  const ctx = document.getElementById('lossChart').getContext('2d');
+  const total = series.length;
+  const timestamps = buildChartTimeline(series);
+
+  const datasets = series.map((s, i) => {
+    const color = getColor(i, total);
+    return {
+      label: s.target,
+      data: alignSeriesToTimeline(timestamps, s.timestamps, s.avg_loss_pct),
+      borderColor: color,
+      backgroundColor: color,
+      tension: 0.3,
+      pointRadius: 2,
+      pointHoverRadius: 5,
+      pointHitRadius: 10,
+      borderWidth: 2,
+    };
+  });
+
+  chart2 = new Chart(ctx, {
+    type: 'line',
+    data: { labels: timestamps.map(t => formatTime(t)), datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        title: { display: true, text: 'Packet Loss (%)', color: '#c9d1d9', font: { size: 14 } },
+        legend: chartLegendOptions(hiddenLossTargets),
+        tooltip: {
+          itemSort: (a, b) => (b.raw == null ? -Infinity : b.raw) - (a.raw == null ? -Infinity : a.raw),
+          callbacks: {
+            label: (ctx) => {
+              let val = ctx.parsed.y;
+              return ctx.dataset.label + ': ' + (typeof val === 'number' ? val.toFixed(2) : val) + '%';
+            }
+          }
+        }
+      },
+      scales: {
+        x: { ticks: { color: '#8b949e', maxTicksLimit: 20 }, grid: { color: '#21262d' } },
+        y: { beginAtZero: true, ticks: { color: '#8b949e', callback: v => v + '%' }, grid: { color: '#21262d' } },
+      },
+    },
+  });
+  applyHiddenTargets(chart2, hiddenLossTargets);
+}
+
+function formatTime(ts) {
+  const d = new Date(ts);
+  return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function esc(s) {
+  const el = document.createElement('span');
+  el.textContent = s;
+  return el.innerHTML;
+}
+
+loadData();
+setInterval(loadData, 5 * 60 * 1000);
+</script>
+</body>
+</html>
