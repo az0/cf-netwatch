@@ -1,6 +1,7 @@
 import DASHBOARD_HTML from './dashboard.html';
 import {
   IP_ALLOWLIST,
+  PING_ANALYTICS_DATASET,
   PING_BUCKET_MINUTES,
   PING_HIDDEN_TARGETS,
   PING_SOURCE_HOSTNAME,
@@ -326,7 +327,7 @@ Workaround: Use 999999.0 for min and 0.0 for max when blob3='fail'.
     SUM(_sample_interval) AS sample_count,
     sumIf(_sample_interval, blob3 = 'ok' and double2>0) AS ok_count,
     sumIf(_sample_interval, blob3 = 'fail' or double2=0) AS fail_count
-FROM netwatch_ping
+FROM ${PING_ANALYTICS_DATASET}
 WHERE
   timestamp > NOW() - INTERVAL '${hours}' HOUR and
   blob1='${PING_SOURCE_HOSTNAME}' and

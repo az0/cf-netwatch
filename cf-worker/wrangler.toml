@@ -10,7 +10,7 @@ globs = ["**/*.html"]
 # Analytics Engine datasets - created automatically on first write
 [[analytics_engine_datasets]]
 binding = "NETWATCH_PING"
-dataset = "netwatch_ping"
+dataset = "netwatch_ping" # this must match value in config.js
 
 [[analytics_engine_datasets]]
 binding = "NETWATCH_SPEEDTEST"

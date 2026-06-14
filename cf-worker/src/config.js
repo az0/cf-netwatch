@@ -14,6 +14,11 @@ export const PING_BUCKET_MINUTES = new Set([15, 30, 60]);
 // only results from this host.
 export const PING_SOURCE_HOSTNAME = 'router';
 
+// Analytics Engine dataset name for ping data.
+// Must match the `dataset` field in wrangler.toml under [[analytics_engine_datasets]].
+// The `binding` name in wrangler.toml is separate and does not need to match.
+export const PING_ANALYTICS_DATASET = 'netwatch_ping';
+
 /*
 If you ping some hosts that are fast and others that are slow,
 the y-axis will max out at the slowest host, making it hard to see
