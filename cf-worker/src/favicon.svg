@@ -1,0 +1,13 @@
+<svg viewBox="0 0 680 680" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <clipPath id="roundedSquare4">
+      <rect x="40" y="40" width="600" height="600" rx="120"/>
+    </clipPath>
+  </defs>
+  <rect x="40" y="40" width="600" height="600" rx="120" fill="#0f172a"/>
+  <g clip-path="url(#roundedSquare4)">
+    <circle cx="340" cy="340" r="320" fill="#0f172a"/>
+    <polyline points="60,340 130,340 170,180 220,480 270,260 320,420 370,160 420,460 470,280 520,420 570,340 620,340" fill="none" stroke="#2dd4bf" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>
+    <polyline points="60,340 110,340 150,470 200,200 250,400 300,150 350,440 400,240 450,480 500,200 550,340 620,340" fill="none" stroke="#fbbf24" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

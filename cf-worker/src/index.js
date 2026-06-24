@@ -1,4 +1,5 @@
 import DASHBOARD_HTML from './dashboard.html';
+import FAVICON_SVG from './favicon.svg';
 import {
   IP_ALLOWLIST,
   PING_ANALYTICS_DATASET,
@@ -500,6 +501,12 @@ export default {
     if (request.method === 'GET') {
       if (path === '/dashboard/ping') {
         return handleDashboardPing();
+      }
+      if (path === '/favicon.svg') {
+        return new Response(FAVICON_SVG, {
+          status: 200,
+          headers: { 'Content-Type': 'image/svg+xml' },
+        });
       }
       if (path === '/api/analytics/ping') {
         return handleAnalyticsPing(env, request);

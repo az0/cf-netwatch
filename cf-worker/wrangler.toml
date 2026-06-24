@@ -2,10 +2,10 @@ name = "cf-netwatch"
 main = "src/index.js"
 compatibility_date = "2026-05-20"
 
-# Bundle .html imports as raw text strings
+# Bundle .html/.svg imports as raw text strings
 [[rules]]
 type = "Text"
-globs = ["**/*.html"]
+globs = ["**/*.html", "**/*.svg"]
 
 # Analytics Engine datasets - created automatically on first write
 [[analytics_engine_datasets]]
